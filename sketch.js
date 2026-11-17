@@ -3,12 +3,16 @@ const WALK_FRAME_COUNT = 6; // 設定行走精靈表中的影格數量
 const MAGIC_FRAME_COUNT = 15; // 設定魔法精靈表中的影格數量
 const EFFECT_FRAME_COUNT = 9; // 設定特效精靈表中的影格數量
 const FRAME_INTERVAL = 120; // 設定每張影格顯示的毫秒數
-const MOVE_SPEED = 5; // 設定角色每幀移動的像素距離
+const MOVE_SPEED = 5; // 設定角色與背景每幀移動的像素距離
+const BG_COPY_COUNT = 3; // 設定背景串接的圖片張數（左、中、右）
 let idleSheet; // 儲存角色待機動畫的精靈表
 let walkSheet; // 儲存角色行走動畫的精靈表
 let magicSheet; // 儲存角色魔法動畫的精靈表
 let effectSheet; // 儲存魔法完成後播放的特效精靈表
+let bgImage; // 儲存背景圖片
 let characterCenterX; // 儲存角色中心點的水平位置
+let scrollX = 0; // 記錄背景目前向左捲動的距離
+let scrollInitialized = false; // 記錄背景捲動位置是否已初始化至中間那張
 let facingDirection = 1; // 儲存角色朝向並以正值代表面向右邊
 let actionState = "idle"; // 儲存角色目前的待機、行走、魔法或特效狀態
 let actionStartedAt = 0; // 記錄目前一次性動畫開始播放的時間
@@ -18,6 +22,7 @@ function preload() { // 在畫布啟動前載入所有角色素材
   walkSheet = loadImage("2/walk/waik.png"); // 載入資料夾中實際存在的行走精靈表
   magicSheet = loadImage("2/magic/magic.png"); // 載入角色魔法精靈表
   effectSheet = loadImage("2/circle/circle.png"); // 載入魔法完成後使用的特效精靈表
+  bgImage = loadImage("bg/1.jpg"); // 載入背景圖片
 } // 結束素材預載函式
 function setup() { // 初始化全螢幕畫布與角色位置
   createCanvas(windowWidth, windowHeight); // 建立符合目前視窗尺寸的畫布
@@ -25,8 +30,27 @@ function setup() { // 初始化全螢幕畫布與角色位置
   frameRate(60); // 設定畫面更新頻率以維持流暢繪製
   characterCenterX = width * (2 / 3); // 將角色初始位置設在畫面寬度的三分之二處
 } // 結束初始化函式
+function getBgWidth() { // 計算背景單張圖片依畫布高度縮放後的寬度
+  return bgImage.width * (height / bgImage.height); // 保持圖片比例並讓高度填滿畫布
+} // 結束背景寬度計算函式
+function drawBackground(bgWidth) { // 繪製三張串接的背景圖片
+  const startX = floor(-scrollX); // 取整數座標避免圖片接縫出現細線
+  for (let i = 0; i < BG_COPY_COUNT; i++) { // 依序繪製左、中、右三張背景
+    const x = startX + floor(i * bgWidth); // 計算第 i 張背景的左側位置
+    const nextX = startX + floor((i + 1) * bgWidth); // 計算下一張背景的左側位置以補齊寬度
+    if (nextX < 0 || x > width) continue; // 超出畫面範圍的背景不繪製
+    image(bgImage, x, 0, nextX - x + 1, height); // 繪製背景並多補一像素避免縫隙
+  } // 結束背景繪製迴圈
+} // 結束背景繪製函式
 function draw() { // 每個畫面更新時繪製背景與角色
-  background(135, 206, 235); // 使用天空藍作為畫布背景
+  const bgWidth = getBgWidth(); // 取得目前單張背景寬度
+  const maxScroll = max(0, bgWidth * BG_COPY_COUNT - width); // 計算背景可捲動的最大距離（背景最右邊）
+  if (!scrollInitialized) { // 判斷是否尚未設定初始捲動位置
+    scrollX = constrain(bgWidth, 0, maxScroll); // 讓畫面一開始顯示中間那張背景
+    scrollInitialized = true; // 標記初始化完成
+  } // 結束初始化捲動位置判斷
+  scrollX = constrain(scrollX, 0, maxScroll); // 確保捲動距離在合法範圍內
+  drawBackground(bgWidth); // 繪製三張串接的背景圖片
   const isActionPlaying = actionState === "magic" || actionState === "effect"; // 判斷魔法或特效動畫是否正在播放
   const actionFrameCount = actionState === "magic" ? MAGIC_FRAME_COUNT : EFFECT_FRAME_COUNT; // 取得目前一次性動畫的影格總數
   const actionDuration = actionFrameCount * FRAME_INTERVAL; // 計算目前一次性動畫完整播放所需時間
@@ -47,8 +71,19 @@ function draw() { // 每個畫面更新時繪製背景與角色
   const characterHeight = min(height * 0.42, width * 0.68); // 依裝置大小調整角色高度
   const characterWidth = characterHeight * (frameWidth / currentSheet.height); // 依影格比例計算角色寬度
   const sourceX = frameIndex * frameWidth; // 計算目前影格在精靈表中的水平位置
-  const direction = isMovingRight ? 1 : isMovingLeft ? -1 : 0; // 依按鍵方向決定角色移動方向
-  characterCenterX += direction * MOVE_SPEED; // 按住方向鍵時更新角色水平位置
+  if (isMovingRight) { // 按下右鍵時的移動處理
+    if (scrollX < maxScroll) { // 背景尚未捲動到最右邊
+      scrollX = min(scrollX + MOVE_SPEED, maxScroll); // 背景往左移動，角色保持原位
+    } else { // 背景已到最右邊，暫停捲動
+      characterCenterX += MOVE_SPEED; // 角色改為向右移動
+    } // 結束向右移動的背景判斷
+  } else if (isMovingLeft) { // 按下左鍵時的移動處理
+    if (scrollX > 0) { // 背景尚未捲動到最左邊
+      scrollX = max(scrollX - MOVE_SPEED, 0); // 背景往右移動，角色保持原位
+    } else { // 背景已到最左邊，暫停捲動
+      characterCenterX -= MOVE_SPEED; // 角色改為向左移動
+    } // 結束向左移動的背景判斷
+  } // 結束左右鍵移動處理
   characterCenterX = constrain(characterCenterX, characterWidth / 2, width - characterWidth / 2); // 限制角色不超出畫布左右邊界
   const characterY = height - characterHeight; // 將角色底部對齊畫布底端
   push(); // 暫存畫布座標狀態以便控制角色轉向
@@ -73,4 +108,5 @@ function keyReleased() { // 處理空白鍵放開並允許下次施法
 function windowResized() { // 視窗或裝置方向改變時重新調整畫布
   resizeCanvas(windowWidth, windowHeight); // 讓畫布重新填滿目前視窗
   characterCenterX = constrain(characterCenterX, 0, width); // 將角色位置限制在新畫布範圍內
+  scrollInitialized = false; // 視窗尺寸改變後重新計算背景捲動位置
 } // 結束視窗尺寸更新函式
